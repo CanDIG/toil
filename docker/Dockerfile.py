@@ -31,7 +31,7 @@ dependencies = ' '.join(['libffi-dev',  # For client side encryption for extras 
                          'wget',
                          'curl',
                          'openssh-server',
-                         'mesos=1.0.1-2.0.94.ubuntu1604',
+                         'mesos',
                          "nodejs",  # CWL support for javascript expressions
                          'rsync',
                          'screen',
@@ -52,7 +52,7 @@ def heredoc(s):
 
 motd = heredoc('''
 
-    This is the Toil appliance. You can run your Toil script directly on the appliance. 
+    This is the Toil appliance. You can run your Toil script directly on the appliance.
     Run toil <workflow>.py --help to see all options for running your workflow.
     For more information see http://toil.readthedocs.io/en/latest/
 
@@ -66,9 +66,11 @@ motd = heredoc('''
 motd = ''.join(l + '\\n\\\n' for l in motd.splitlines())
 
 print(heredoc('''
-    FROM ubuntu:16.04
+    FROM ubuntu:18.04
 
-    RUN apt-get -y update --fix-missing && apt-get -y upgrade && apt-get -y install apt-transport-https ca-certificates software-properties-common && apt-get clean && rm -rf /var/lib/apt/lists/*
+    RUN apt-get -y update --fix-missing && apt-get -y upgrade && \
+        apt-get -y install apt-transport-https ca-certificates software-properties-common && \
+        apt-get clean && rm -rf /var/lib/apt/lists/*
 
     RUN echo "deb http://repos.mesosphere.io/ubuntu/ xenial main" \
         > /etc/apt/sources.list.d/mesosphere.list \
@@ -77,8 +79,9 @@ print(heredoc('''
         > /etc/apt/sources.list.d/nodesource.list \
         && apt-key adv --keyserver keyserver.ubuntu.com --recv 68576280
 
-    RUN add-apt-repository -y ppa:jonathonf/python-3.6
-    
+    #RUN add-apt-repository -y ppa:jonathonf/python-3.6
+    RUN add-apt-repository -y ppa:xapienz/curl34
+
     RUN apt-get -y update --fix-missing && \
         DEBIAN_FRONTEND=noninteractive apt-get -y upgrade && \
         DEBIAN_FRONTEND=noninteractive apt-get -y install {dependencies} && \
@@ -89,7 +92,7 @@ print(heredoc('''
         tar xvf go1.13.3.linux-amd64.tar.gz && \
         mv go/bin/* /usr/bin/ && \
         mv go /usr/local/
-        
+
     RUN mkdir -p $(go env GOPATH)/src/github.com/sylabs && \
         cd $(go env GOPATH)/src/github.com/sylabs && \
         git clone https://github.com/sylabs/singularity.git && \
@@ -99,7 +102,7 @@ print(heredoc('''
         cd ./builddir && \
         make -j4 && \
         make install
-    
+
     RUN mkdir /root/.ssh && \
         chmod 700 /root/.ssh
 
@@ -108,7 +111,7 @@ print(heredoc('''
     ADD customDockerInit.sh /usr/bin/customDockerInit.sh
 
     RUN chmod 777 /usr/bin/waitForKey.sh && chmod 777 /usr/bin/customDockerInit.sh
-    
+
     # The stock pip is too old and can't install from sdist with extras
     RUN pip install --upgrade pip==9.0.1
 
@@ -136,7 +139,7 @@ print(heredoc('''
 
     # Fix for `screen` (https://github.com/BD2KGenomics/toil/pull/1386#issuecomment-267424561)
     ENV TERM linux
-    
+
     # Run bash instead of sh inside of screen
     ENV SHELL /bin/bash
     RUN echo "defshell -bash" > ~/.screenrc
