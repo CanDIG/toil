@@ -14,6 +14,7 @@
 
 from __future__ import absolute_import
 from __future__ import division
+
 from future import standard_library
 
 standard_library.install_aliases()
@@ -36,7 +37,6 @@ from stubserver import FTPStubServer
 from abc import abstractmethod, ABCMeta
 from itertools import chain, islice
 from threading import Thread
-from unittest import skip
 from six.moves.queue import Queue
 from six.moves import SimpleHTTPServer, StringIO
 from six import iteritems
@@ -47,7 +47,6 @@ from toil.lib.memoize import memoize
 from toil.lib.exceptions import panic
 # noinspection PyPackageRequirements
 # (installed by `make prepare`)
-from mock import patch
 
 from toil.lib.compatibility import USING_PYTHON2
 from toil.common import Config, Toil
@@ -55,7 +54,6 @@ from toil.fileStores import FileID
 from toil.job import Job, JobNode
 from toil.jobStores.abstractJobStore import (NoSuchJobException,
                                              NoSuchFileException)
-from toil.jobStores.googleJobStore import googleRetry
 from toil.jobStores.fileJobStore import FileJobStore
 from toil.statsAndLogging import StatsAndLogging
 from toil.test import (ToilTest,
@@ -66,6 +64,16 @@ from toil.test import (ToilTest,
                        travis_test,
                        slow)
 from future.utils import with_metaclass
+
+# Need googleRetry decorator even if google is not available, so make one up.
+# Unconventional use of decorator to determine if google is enabled by seeing if
+# it returns the parameter passed in.
+if needs_google(needs_google) is needs_google:
+    from toil.jobStores.googleJobStore import googleRetry
+else:
+    def googleRetry(x):
+        return x
+
 
 logger = logging.getLogger(__name__)
 
@@ -673,7 +681,7 @@ class AbstractJobStoreTest(object):
                                        for testCls in testClasses
                                        if not getattr(testCls, '__unittest_skip__', False)}
 
-            def testImportExportFile(self, otherCls, size):
+            def testImportExportFile(self, otherCls, size, moveExports):
                 """
                 :param AbstractJobStoreTest.Test self: the current test case
 
@@ -684,6 +692,8 @@ class AbstractJobStoreTest(object):
                 """
                 # Prepare test file in other job store
                 self.jobstore_initialized.partSize = cls.mpTestPartSize
+                self.jobstore_initialized.moveExports = moveExports
+
                 # The string in otherCls() is arbitrary as long as it returns a class that has access
                 # to ._externalStore() and ._prepareTestFile()
                 other = otherCls('testSharedFiles')
@@ -700,7 +710,20 @@ class AbstractJobStoreTest(object):
                 dstUrl = other._prepareTestFile(store)
                 self.jobstore_initialized.exportFile(jobStoreFileID, dstUrl)
                 self.assertEqual(fileMD5, other._hashTestFile(dstUrl))
-                if otherCls.__name__ == 'FileJobStoreTest':  # Remove local Files
+
+                if otherCls.__name__ == 'FileJobStoreTest':
+                    if isinstance(self.jobstore_initialized, FileJobStore):
+                        jobStorePath = self.jobstore_initialized._getFilePathFromId(jobStoreFileID)
+                        jobStoreHasLink = os.path.islink(jobStorePath)
+                        if self.jobstore_initialized.moveExports:
+                            # Ensure the export performed a move / link
+                            self.assertTrue(jobStoreHasLink)
+                            self.assertEqual(os.path.realpath(jobStorePath), dstUrl[7:])
+                        else:
+                            # Ensure the export has not moved the job store file
+                            self.assertFalse(jobStoreHasLink)
+
+                    # Remove local Files
                     os.remove(srcUrl[7:])
                     os.remove(dstUrl[7:])
 
@@ -710,7 +733,8 @@ class AbstractJobStoreTest(object):
                                  oneMiB=2 ** 20,
                                  partSizeMinusOne=cls.mpTestPartSize - 1,
                                  partSize=cls.mpTestPartSize,
-                                 partSizePlusOne=cls.mpTestPartSize + 1))
+                                 partSizePlusOne=cls.mpTestPartSize + 1),
+                       moveExports={'deactivated': None, 'activated': True})
 
             def testImportSharedFile(self, otherCls):
                 """
@@ -1107,7 +1131,6 @@ class FileJobStoreTest(AbstractJobStoreTest.Test):
         shutil.rmtree(self.jobstore_initialized.jobStoreDir)
 
     def _prepareTestFile(self, dirPath, size=None):
-        import binascii
         fileName = 'testfile_%s' % uuid.uuid4()
         localFilePath = dirPath + fileName
         url = 'file://%s' % localFilePath
@@ -1142,7 +1165,6 @@ class FileJobStoreTest(AbstractJobStoreTest.Test):
             self.assertTrue(fileID.endswith(os.path.basename(path)))
         finally:
             os.unlink(path)
-
 
 @needs_google
 class GoogleJobStoreTest(AbstractJobStoreTest.Test):
@@ -1216,6 +1238,7 @@ class AWSJobStoreTest(AbstractJobStoreTest.Test):
         """
         from boto.sdb import connect_to_region
         from boto.s3.connection import Location, S3Connection
+        from boto.exception import S3ResponseError
         from toil.jobStores.aws.jobStore import BucketLocationConflictException
         from toil.jobStores.aws.utils import retry_s3
         externalAWSLocation = Location.USWest
@@ -1253,9 +1276,19 @@ class AWSJobStoreTest(AbstractJobStoreTest.Test):
             else:
                 self.fail()
             finally:
-                for attempt in retry_s3():
-                    with attempt:
-                        s3.delete_bucket(bucket=bucket)
+                try:
+                    for attempt in retry_s3():
+                        with attempt:
+                            s3.delete_bucket(bucket=bucket)
+                except S3ResponseError as e:
+                    # The actual HTTP code of the error is in status.
+                    # See https://github.com/boto/boto/blob/91ba037e54ef521c379263b0ac769c66182527d7/boto/exception.py#L77-L80
+                    # See also: https://github.com/boto/boto/blob/91ba037e54ef521c379263b0ac769c66182527d7/boto/exception.py#L154-L156
+                    if e.status == 404:
+                        # The bucket doesn't exist; maybe a failed delete actually succeeded.
+                        pass
+                    else:
+                        raise
 
     @slow
     def testInlinedFiles(self):

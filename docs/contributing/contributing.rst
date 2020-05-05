@@ -24,6 +24,9 @@ environment variables are set (see :ref:`test_env_vars`).
 |                         | the terminal as expected.                         |
 +-------------------------+---------------------------------------------------+
 
+Before running tests for the first time, initialize your virtual environment
+following the steps in :ref:`buildFromSource`.
+
 Run all tests (including slow tests)::
 
     $ make test
@@ -112,8 +115,6 @@ Test Environment Variables
 +------------------------+----------------------------------------------------+
 | TOIL_AWS_KEYNAME       | An AWS keyname (see :ref:`prepareAWS`), which      |
 |                        | is required to run the AWS tests.                  |
-+------------------------+----------------------------------------------------+
-| TOIL_SSH_KEYNAME       | The SSH key to use for tests.                      |
 +------------------------+----------------------------------------------------+
 | TOIL_GOOGLE_PROJECTID  | A Google Cloud account projectID                   |
 |                        | (see :ref:`runningGCE`), which is required to      |
